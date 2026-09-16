@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .shiny-badge {
+    position: relative;
+    overflow: hidden;
+  }
+  .shiny-badge::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.6) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    transform: rotate(45deg) translate(-50%, -50%);
+    animation: shine 3.5s infinite;
+    pointer-events: none;
+  }
+
+  @keyframes shine {
+    0% { left: -100%; }
+    25% { left: 100%; }
+    100% { left: 100%; }
+  }
+
+  .heart-bump {
+    animation: heartBump 0.35s ease-out;
+  }
+
+  @keyframes heartBump {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.35); }
+    100% { transform: scale(1); }
+  }
+}
+

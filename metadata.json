@@ -1,0 +1,6 @@
+{
+  "name": "학급 독서 기록장",
+  "description": "구글 시트와 연동되는 우리 반 온라인 독서 기록장 및 학급 대시보드",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
