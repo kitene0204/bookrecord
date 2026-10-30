@@ -14,17 +14,25 @@ import {
   fetchBooksFromSheet,
   syncToGoogleSheet,
   getGoalBooks,
-  setGoalBooks
+  setGoalBooks,
+  getActiveSheetTab,
+  setActiveSheetTab,
+  getStudentsList,
+  setStudentsList
 } from './services/sheetService';
 
 const STUDENT_SESSION_KEY = 'classReadingCurrentStudent';
 
 export default function App() {
-  const [books, setBooks] = useState<BookRecord[]>(() => getLocalBooks());
+  const [activeSheetTab, setActiveSheetTabState] = useState<string>(() => getActiveSheetTab());
+  const [students, setStudentsState] = useState<string[]>(() => getStudentsList());
+  const [books, setBooks] = useState<BookRecord[]>(() => getLocalBooks(getActiveSheetTab()));
+  
   const [currentStudent, setCurrentStudent] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return sessionStorage.getItem(STUDENT_SESSION_KEY) || null;
   });
+  
   const [currentPage, setCurrentPage] = useState<PageView>(() => {
     if (typeof window === 'undefined') return 'login';
     const savedStudent = sessionStorage.getItem(STUDENT_SESSION_KEY);
@@ -40,7 +48,7 @@ export default function App() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deletingBook, setDeletingBook] = useState<BookRecord | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'goal' | 'sheet'>('goal');
+  const [settingsTab, setSettingsTab] = useState<'yearTab' | 'goal' | 'students' | 'sheet'>('yearTab');
   const [goalBooks, setGoalBooksState] = useState<number>(() => getGoalBooks());
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -51,22 +59,23 @@ export default function App() {
     });
   };
 
-  // Initial load from Google Sheet
-  const loadSheetData = useCallback(async (showNotification = false) => {
+  // Load from Google Sheet for the active tab
+  const loadSheetData = useCallback(async (tabName?: string, showNotification = false) => {
+    const targetTab = tabName || activeSheetTab;
     setSyncStatus('syncing');
     try {
-      const { books: sheetBooks, success, error } = await fetchBooksFromSheet();
-      if (success && sheetBooks && sheetBooks.length > 0) {
+      const { books: sheetBooks, success, error } = await fetchBooksFromSheet(targetTab);
+      if (success && sheetBooks) {
         setBooks(sheetBooks);
-        saveLocalBooks(sheetBooks);
+        saveLocalBooks(sheetBooks, targetTab);
         setSyncStatus('synced');
         if (showNotification) {
-          showToast('구글 시트 데이터를 성공적으로 불러왔습니다!');
+          showToast(`[${targetTab}] 데이터를 성공적으로 동기화했습니다!`);
         }
       } else {
         setSyncStatus('offline');
         if (showNotification) {
-          showToast(error ? `시트 연동 알림: ${error}` : '로컬 캐시 데이터를 유지합니다.', 'info');
+          showToast(error ? `시트 알림: ${error}` : `[${targetTab}] 로컬 데이터를 표시합니다.`, 'info');
         }
       }
     } catch {
@@ -75,11 +84,41 @@ export default function App() {
         showToast('시트 연결에 실패하여 로컬 데이터를 표시합니다.', 'info');
       }
     }
-  }, []);
+  }, [activeSheetTab]);
 
   useEffect(() => {
-    loadSheetData(false);
-  }, [loadSheetData]);
+    loadSheetData(activeSheetTab, false);
+  }, [activeSheetTab, loadSheetData]);
+
+  // Switch sheet tab (e.g. from 2026 to 2027 or past years)
+  const handleSwitchTab = async (newTabName: string) => {
+    const trimmed = newTabName.trim();
+    if (!trimmed) return;
+
+    setActiveSheetTab(trimmed);
+    setActiveSheetTabState(trimmed);
+
+    // Load local books for that tab first
+    const local = getLocalBooks(trimmed);
+    setBooks(local);
+
+    // If current logged-in student doesn't exist in that context, clear or keep
+    // Then attempt sheet fetch
+    await loadSheetData(trimmed, true);
+  };
+
+  // Save new students list
+  const handleSaveStudents = (newStudents: string[]) => {
+    setStudentsList(newStudents);
+    setStudentsState(newStudents);
+    // If logged in student is no longer in list, logout
+    if (currentStudent && !newStudents.includes(currentStudent)) {
+      setCurrentStudent(null);
+      sessionStorage.removeItem(STUDENT_SESSION_KEY);
+      setCurrentPage('login');
+    }
+    showToast(`학생 명단(${newStudents.length}명)이 저장되었습니다!`);
+  };
 
   // Login handler
   const handleLogin = (studentName: string) => {
@@ -155,14 +194,14 @@ export default function App() {
       : [updatedBook, ...books];
 
     setBooks(nextBooks);
-    saveLocalBooks(nextBooks);
+    saveLocalBooks(nextBooks, activeSheetTab);
     setIsBookModalOpen(false);
     setEditingBook(null);
 
     showToast(isEditing ? '독서 기록이 수정되었습니다!' : '새 독서 기록이 등록되었습니다!');
 
-    // Background sync to Google Sheet
-    syncToGoogleSheet('save', { book: updatedBook });
+    // Background sync to Google Sheet under activeSheetTab
+    syncToGoogleSheet('save', { book: updatedBook }, activeSheetTab);
   };
 
   // Delete Book
@@ -172,14 +211,14 @@ export default function App() {
 
     const nextBooks = books.filter((b) => b.id !== targetId);
     setBooks(nextBooks);
-    saveLocalBooks(nextBooks);
+    saveLocalBooks(nextBooks, activeSheetTab);
     setIsDeleteModalOpen(false);
     setDeletingBook(null);
 
     showToast('독서 기록이 삭제되었습니다.');
 
-    // Background sync to Google Sheet
-    syncToGoogleSheet('delete', { id: targetId });
+    // Background sync to Google Sheet under activeSheetTab
+    syncToGoogleSheet('delete', { id: targetId }, activeSheetTab);
   };
 
   // Toggle Like on Book
@@ -207,14 +246,14 @@ export default function App() {
 
     const nextBooks = books.map((b) => (b.id === bookId ? updatedBook : b));
     setBooks(nextBooks);
-    saveLocalBooks(nextBooks);
+    saveLocalBooks(nextBooks, activeSheetTab);
 
     if (!alreadyLiked) {
       showToast('친구의 감상평을 추천했습니다! ❤️');
     }
 
     // Sync to Google Sheet
-    syncToGoogleSheet('save', { book: updatedBook });
+    syncToGoogleSheet('save', { book: updatedBook }, activeSheetTab);
   };
 
   // Add Comment on Book
@@ -242,11 +281,11 @@ export default function App() {
 
     const nextBooks = books.map((b) => (b.id === bookId ? updatedBook : b));
     setBooks(nextBooks);
-    saveLocalBooks(nextBooks);
+    saveLocalBooks(nextBooks, activeSheetTab);
     showToast('댓글이 등록되었습니다!');
 
     // Sync to Google Sheet
-    syncToGoogleSheet('save', { book: updatedBook });
+    syncToGoogleSheet('save', { book: updatedBook }, activeSheetTab);
   };
 
   // Delete Comment on Book
@@ -261,11 +300,11 @@ export default function App() {
 
     const nextBooks = books.map((b) => (b.id === bookId ? updatedBook : b));
     setBooks(nextBooks);
-    saveLocalBooks(nextBooks);
+    saveLocalBooks(nextBooks, activeSheetTab);
     showToast('댓글이 삭제되었습니다.');
 
     // Sync to Google Sheet
-    syncToGoogleSheet('save', { book: updatedBook });
+    syncToGoogleSheet('save', { book: updatedBook }, activeSheetTab);
   };
 
   // Check if current logged-in student has Reading King status (>= 10 books)
@@ -281,17 +320,18 @@ export default function App() {
         background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #6366f1 100%)'
       }}
     >
-      {/* Top App Navbar */}
+      {/* Top App Navbar with active tab badge */}
       <Navbar
         currentPage={currentPage}
         currentStudent={currentStudent}
         syncStatus={syncStatus}
         isReadingKing={isCurrentStudentReadingKing}
+        activeTab={activeSheetTab}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
-        onRefreshSync={() => loadSheetData(true)}
+        onRefreshSync={() => loadSheetData(activeSheetTab, true)}
         onOpenSettings={() => {
-          setSettingsTab('goal');
+          setSettingsTab('yearTab');
           setIsSettingsModalOpen(true);
         }}
       />
@@ -300,8 +340,14 @@ export default function App() {
       <main className="flex-1 w-full pb-12">
         {currentPage === 'login' && (
           <LoginPage
+            students={students}
+            activeTab={activeSheetTab}
             onLogin={handleLogin}
             onViewDashboard={() => setCurrentPage('dashboard')}
+            onOpenSettings={() => {
+              setSettingsTab('yearTab');
+              setIsSettingsModalOpen(true);
+            }}
           />
         )}
 
@@ -330,11 +376,12 @@ export default function App() {
             books={books}
             currentStudent={currentStudent}
             goalBooks={goalBooks}
+            activeTab={activeSheetTab}
             onToggleLike={handleToggleLike}
             onAddComment={handleAddComment}
             onDeleteComment={handleDeleteComment}
             onOpenSettings={() => {
-              setSettingsTab('goal');
+              setSettingsTab('yearTab');
               setIsSettingsModalOpen(true);
             }}
             onRequireLogin={() => {
@@ -368,10 +415,14 @@ export default function App() {
         onConfirm={handleDeleteConfirm}
       />
 
-      {/* Settings Modal (Goal count and Google Apps Script) */}
+      {/* Comprehensive Settings Modal */}
       <ScriptSettingsModal
         isOpen={isSettingsModalOpen}
         initialTab={settingsTab}
+        activeTabName={activeSheetTab}
+        onSwitchTab={handleSwitchTab}
+        students={students}
+        onSaveStudents={handleSaveStudents}
         goalBooks={goalBooks}
         totalBooksCount={books.length}
         onSaveGoal={(newGoal) => {
@@ -380,7 +431,7 @@ export default function App() {
           showToast(`학급 독서 목표가 ${newGoal.toLocaleString()}권으로 설정되었습니다!`);
         }}
         onClose={() => setIsSettingsModalOpen(false)}
-        onTestAndReload={() => loadSheetData(true)}
+        onTestAndReload={() => loadSheetData(activeSheetTab, true)}
       />
 
       {/* Floating Notifications Toast */}

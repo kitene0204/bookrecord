@@ -1,4 +1,14 @@
-import { BookOpen, BarChart3, LogOut, RefreshCw, CheckCircle2, AlertTriangle, Settings, Sparkles } from 'lucide-react';
+import {
+  BookOpen,
+  BarChart3,
+  LogOut,
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  Settings,
+  Sparkles,
+  Calendar
+} from 'lucide-react';
 import { PageView, SyncStatus } from '../types';
 import { TEACHER_NAME } from '../data/students';
 
@@ -7,6 +17,7 @@ interface NavbarProps {
   currentStudent: string | null;
   syncStatus: SyncStatus;
   isReadingKing: boolean;
+  activeTab: string;
   onNavigate: (page: PageView) => void;
   onLogout: () => void;
   onRefreshSync: () => void;
@@ -18,6 +29,7 @@ export function Navbar({
   currentStudent,
   syncStatus,
   isReadingKing,
+  activeTab,
   onNavigate,
   onLogout,
   onRefreshSync,
@@ -39,8 +51,20 @@ export function Navbar({
               <BookOpen className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-extrabold text-white text-lg tracking-tight">학급 독서 기록</span>
+                <span
+                  id="nav-active-tab-badge"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSettings();
+                  }}
+                  title="현재 구글 시트 탭 (클릭하여 탭 변경)"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-white/15 hover:bg-white/25 text-indigo-100 border border-white/20 transition-all cursor-pointer"
+                >
+                  <Calendar className="w-3 h-3 text-amber-300" />
+                  {activeTab}
+                </span>
                 {isReadingKing && (
                   <span
                     id="nav-reading-king-badge"
@@ -71,9 +95,9 @@ export function Navbar({
             onClick={onRefreshSync}
             title={
               syncStatus === 'syncing'
-                ? '구글 시트와 동기화 중...'
+                ? `구글 시트 [${activeTab}] 탭과 동기화 중...`
                 : syncStatus === 'synced'
-                ? '구글 시트 연동 완료 (클릭하여 새로고침)'
+                ? `구글 시트 [${activeTab}] 탭 연동 완료 (클릭하여 새로고침)`
                 : syncStatus === 'error'
                 ? '시트 연동 오류 (로컬에 안전하게 저장됨)'
                 : '로컬 모드 (클릭하여 시트 동기화 시도)'
@@ -100,7 +124,7 @@ export function Navbar({
           <button
             id="nav-settings-btn"
             onClick={onOpenSettings}
-            title="환경 설정 (목표 권 수 및 시트 연동)"
+            title="환경 설정 (시트 탭, 학생 명단, 목표 권 수)"
             className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors border border-white/10"
           >
             <Settings className="w-4 h-4" />

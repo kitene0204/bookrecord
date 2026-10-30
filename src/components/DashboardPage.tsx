@@ -21,6 +21,7 @@ interface DashboardPageProps {
   books: BookRecord[];
   currentStudent: string | null;
   goalBooks?: number;
+  activeTab?: string;
   onToggleLike: (bookId: string) => void;
   onAddComment: (bookId: string, text: string) => void;
   onDeleteComment: (bookId: string, commentId: string) => void;
@@ -32,6 +33,7 @@ export function DashboardPage({
   books,
   currentStudent,
   goalBooks = GOAL_BOOKS,
+  activeTab = '2026학년도',
   onToggleLike,
   onAddComment,
   onDeleteComment,
@@ -232,15 +234,18 @@ export function DashboardPage({
             <h2 className="text-lg sm:text-xl font-extrabold text-white">
               학급 독서 온도계 (목표 {targetGoal.toLocaleString()}권)
             </h2>
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-white/20 text-white/90 border border-white/20">
+              {activeTab}
+            </span>
             {onOpenSettings && (
               <button
                 id="dash-edit-goal-btn"
                 onClick={onOpenSettings}
-                title="목표 권 수 직접 변경하기"
+                title="목표 권 수 및 시트 탭 변경하기"
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-xl bg-white/15 hover:bg-white/25 text-white transition-all border border-white/20 shadow-sm hover:scale-105 active:scale-95"
               >
                 <Settings className="w-3.5 h-3.5 text-amber-300" />
-                <span>목표 변경</span>
+                <span>목표/탭 변경</span>
               </button>
             )}
           </div>
