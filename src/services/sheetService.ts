@@ -3,6 +3,7 @@ import { DEFAULT_SCRIPT_URL, INITIAL_SEED_BOOKS } from '../data/students';
 
 const STORAGE_KEY = 'classReadingBooks';
 const SCRIPT_URL_KEY = 'classReadingScriptUrl';
+const GOAL_BOOKS_KEY = 'classReadingGoalBooks';
 
 export function getScriptUrl(): string {
   if (typeof window === 'undefined') return DEFAULT_SCRIPT_URL;
@@ -12,6 +13,22 @@ export function getScriptUrl(): string {
 export function setScriptUrl(url: string): void {
   if (typeof window !== 'undefined') {
     localStorage.setItem(SCRIPT_URL_KEY, url.trim());
+  }
+}
+
+export function getGoalBooks(): number {
+  if (typeof window === 'undefined') return 100;
+  const saved = localStorage.getItem(GOAL_BOOKS_KEY);
+  if (saved) {
+    const parsed = parseInt(saved, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 100;
+}
+
+export function setGoalBooks(goal: number): void {
+  if (typeof window !== 'undefined' && goal > 0) {
+    localStorage.setItem(GOAL_BOOKS_KEY, goal.toString());
   }
 }
 

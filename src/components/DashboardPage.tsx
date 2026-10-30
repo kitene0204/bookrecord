@@ -11,7 +11,8 @@ import {
   Send,
   Trash2,
   Star,
-  BookOpen
+  BookOpen,
+  Settings
 } from 'lucide-react';
 import { BookRecord, CommentItem } from '../types';
 import { GOAL_BOOKS } from '../data/students';
@@ -19,19 +20,23 @@ import { GOAL_BOOKS } from '../data/students';
 interface DashboardPageProps {
   books: BookRecord[];
   currentStudent: string | null;
+  goalBooks?: number;
   onToggleLike: (bookId: string) => void;
   onAddComment: (bookId: string, text: string) => void;
   onDeleteComment: (bookId: string, commentId: string) => void;
   onRequireLogin: () => void;
+  onOpenSettings?: () => void;
 }
 
 export function DashboardPage({
   books,
   currentStudent,
+  goalBooks = GOAL_BOOKS,
   onToggleLike,
   onAddComment,
   onDeleteComment,
-  onRequireLogin
+  onRequireLogin,
+  onOpenSettings
 }: DashboardPageProps) {
   // Current view date for month selection
   const [viewDate, setViewDate] = useState<Date>(() => new Date());
@@ -61,7 +66,8 @@ export function DashboardPage({
   }, [books]);
 
   // Thermometer progress
-  const thermoPercent = Math.min(Math.round((totalBooksCount / GOAL_BOOKS) * 100), 100);
+  const targetGoal = goalBooks && goalBooks > 0 ? goalBooks : GOAL_BOOKS;
+  const thermoPercent = Math.min(Math.round((totalBooksCount / targetGoal) * 100), 100);
 
   // Filter books completed in the selected month
   const monthBooks = useMemo(() => {
@@ -219,16 +225,27 @@ export function DashboardPage({
       {/* Thermometer Goal Section */}
       <section className="bg-white/10 p-6 sm:p-7 rounded-3xl backdrop-blur-md border border-white/20 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center">
               <Flame className="w-5 h-5 text-amber-400 animate-pulse" />
             </div>
             <h2 className="text-lg sm:text-xl font-extrabold text-white">
-              학급 독서 온도계 (목표 {GOAL_BOOKS}권)
+              학급 독서 온도계 (목표 {targetGoal.toLocaleString()}권)
             </h2>
+            {onOpenSettings && (
+              <button
+                id="dash-edit-goal-btn"
+                onClick={onOpenSettings}
+                title="목표 권 수 직접 변경하기"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-xl bg-white/15 hover:bg-white/25 text-white transition-all border border-white/20 shadow-sm hover:scale-105 active:scale-95"
+              >
+                <Settings className="w-3.5 h-3.5 text-amber-300" />
+                <span>목표 변경</span>
+              </button>
+            )}
           </div>
           <span id="thermo-text" className="text-white font-black text-base sm:text-lg">
-            {totalBooksCount} / {GOAL_BOOKS} 권 ({thermoPercent}%)
+            {totalBooksCount} / {targetGoal.toLocaleString()} 권 ({thermoPercent}%)
           </span>
         </div>
 
@@ -245,10 +262,12 @@ export function DashboardPage({
           />
         </div>
 
-        <p className="text-xs text-white/70 mt-2.5 flex items-center justify-between">
-          <span>🎯 우리 반 친구들이 함께 힘을 모아 100권 독서를 달성해 봐요!</span>
-          {totalBooksCount >= GOAL_BOOKS && (
-            <span className="text-amber-300 font-bold animate-bounce">🎉 100권 달성 완료! 축하합니다!</span>
+        <p className="text-xs text-white/70 mt-2.5 flex flex-wrap items-center justify-between gap-2">
+          <span>🎯 우리 반 친구들이 함께 힘을 모아 {targetGoal.toLocaleString()}권 독서를 달성해 봐요!</span>
+          {totalBooksCount >= targetGoal && (
+            <span className="text-amber-300 font-bold animate-bounce">
+              🎉 {targetGoal.toLocaleString()}권 달성 완료! 축하합니다!
+            </span>
           )}
         </p>
       </section>

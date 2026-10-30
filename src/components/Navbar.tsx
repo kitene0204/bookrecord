@@ -100,7 +100,7 @@ export function Navbar({
           <button
             id="nav-settings-btn"
             onClick={onOpenSettings}
-            title="구글 시트 연동 설정"
+            title="환경 설정 (목표 권 수 및 시트 연동)"
             className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors border border-white/10"
           >
             <Settings className="w-4 h-4" />

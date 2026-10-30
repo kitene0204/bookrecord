@@ -12,7 +12,9 @@ import {
   getLocalBooks,
   saveLocalBooks,
   fetchBooksFromSheet,
-  syncToGoogleSheet
+  syncToGoogleSheet,
+  getGoalBooks,
+  setGoalBooks
 } from './services/sheetService';
 
 const STUDENT_SESSION_KEY = 'classReadingCurrentStudent';
@@ -38,6 +40,8 @@ export default function App() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deletingBook, setDeletingBook] = useState<BookRecord | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'goal' | 'sheet'>('goal');
+  const [goalBooks, setGoalBooksState] = useState<number>(() => getGoalBooks());
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({
@@ -286,7 +290,10 @@ export default function App() {
         onNavigate={handleNavigate}
         onLogout={handleLogout}
         onRefreshSync={() => loadSheetData(true)}
-        onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onOpenSettings={() => {
+          setSettingsTab('goal');
+          setIsSettingsModalOpen(true);
+        }}
       />
 
       {/* Main Pages */}
@@ -322,9 +329,14 @@ export default function App() {
           <DashboardPage
             books={books}
             currentStudent={currentStudent}
+            goalBooks={goalBooks}
             onToggleLike={handleToggleLike}
             onAddComment={handleAddComment}
             onDeleteComment={handleDeleteComment}
+            onOpenSettings={() => {
+              setSettingsTab('goal');
+              setIsSettingsModalOpen(true);
+            }}
             onRequireLogin={() => {
               showToast('로그인 후 추천 및 댓글 기능을 이용할 수 있어요!', 'info');
               setCurrentPage('login');
@@ -356,9 +368,17 @@ export default function App() {
         onConfirm={handleDeleteConfirm}
       />
 
-      {/* Google Apps Script Settings Modal */}
+      {/* Settings Modal (Goal count and Google Apps Script) */}
       <ScriptSettingsModal
         isOpen={isSettingsModalOpen}
+        initialTab={settingsTab}
+        goalBooks={goalBooks}
+        totalBooksCount={books.length}
+        onSaveGoal={(newGoal) => {
+          setGoalBooks(newGoal);
+          setGoalBooksState(newGoal);
+          showToast(`학급 독서 목표가 ${newGoal.toLocaleString()}권으로 설정되었습니다!`);
+        }}
         onClose={() => setIsSettingsModalOpen(false)}
         onTestAndReload={() => loadSheetData(true)}
       />
