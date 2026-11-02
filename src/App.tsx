@@ -374,6 +374,7 @@ export default function App() {
         {currentPage === 'dashboard' && (
           <DashboardPage
             books={books}
+            students={students}
             currentStudent={currentStudent}
             goalBooks={goalBooks}
             activeTab={activeSheetTab}

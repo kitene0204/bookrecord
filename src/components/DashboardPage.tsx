@@ -12,13 +12,21 @@ import {
   Trash2,
   Star,
   BookOpen,
-  Settings
+  Settings,
+  Calendar,
+  Filter,
+  ArrowUpDown,
+  FileSpreadsheet,
+  CheckCircle2,
+  BookCheck,
+  ChevronDown
 } from 'lucide-react';
 import { BookRecord, CommentItem } from '../types';
-import { GOAL_BOOKS } from '../data/students';
+import { GOAL_BOOKS, TEACHER_NAME } from '../data/students';
 
 interface DashboardPageProps {
   books: BookRecord[];
+  students?: string[];
   currentStudent: string | null;
   goalBooks?: number;
   activeTab?: string;
@@ -29,8 +37,11 @@ interface DashboardPageProps {
   onOpenSettings?: () => void;
 }
 
+export type PeriodMode = 'month' | 'custom' | 'all';
+
 export function DashboardPage({
   books,
+  students = [],
   currentStudent,
   goalBooks = GOAL_BOOKS,
   activeTab = '2026학년도',
@@ -40,8 +51,27 @@ export function DashboardPage({
   onRequireLogin,
   onOpenSettings
 }: DashboardPageProps) {
-  // Current view date for month selection
+  // Period filter states
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('month');
   const [viewDate, setViewDate] = useState<Date>(() => new Date());
+
+  // Custom date range state (YYYY-MM-DD)
+  const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    return new Date().toISOString().slice(0, 10);
+  });
+
+  // Table sorting & filtering state
+  const [sortField, setSortField] = useState<'count' | 'avg' | 'name'>('count');
+  const [sortAsc, setSortAsc] = useState<boolean>(false);
+  const [studentSearch, setStudentSearch] = useState<string>('');
+  const [onlyReadStudents, setOnlyReadStudents] = useState<boolean>(false);
+  const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
+
   // Set of book IDs whose comment section is opened
   const [openComments, setOpenComments] = useState<Set<string>>(new Set());
   // Input draft per book
@@ -59,32 +89,183 @@ export function DashboardPage({
   const month = viewDate.getMonth() + 1;
   const monthYearStr = `${year}-${String(month).padStart(2, '0')}`;
 
-  // Total class stats across all time
-  const totalBooksCount = books.length;
-  const overallAvgRating = useMemo(() => {
-    const rated = books.filter((b) => b.rating > 0);
-    if (rated.length === 0) return '-';
-    return (rated.reduce((acc, b) => acc + b.rating, 0) / rated.length).toFixed(1);
-  }, [books]);
+  // Quick preset ranges for custom period
+  const applyPresetRange = (preset: 'thisMonth' | 'lastMonth' | 'semester1' | 'semester2' | 'last7Days' | 'last30Days' | 'all') => {
+    const now = new Date();
+    const curYear = now.getFullYear();
 
-  // Thermometer progress
+    if (preset === 'thisMonth') {
+      const start = new Date(curYear, now.getMonth(), 1).toISOString().slice(0, 10);
+      const end = now.toISOString().slice(0, 10);
+      setCustomStartDate(start);
+      setCustomEndDate(end);
+      setPeriodMode('custom');
+    } else if (preset === 'lastMonth') {
+      const start = new Date(curYear, now.getMonth() - 1, 1).toISOString().slice(0, 10);
+      const end = new Date(curYear, now.getMonth(), 0).toISOString().slice(0, 10);
+      setCustomStartDate(start);
+      setCustomEndDate(end);
+      setPeriodMode('custom');
+    } else if (preset === 'semester1') {
+      // 1학기: 3월 1일 ~ 8월 31일
+      setCustomStartDate(`${curYear}-03-01`);
+      setCustomEndDate(`${curYear}-08-31`);
+      setPeriodMode('custom');
+    } else if (preset === 'semester2') {
+      // 2학기: 9월 1일 ~ 익년 2월 28일
+      setCustomStartDate(`${curYear}-09-01`);
+      setCustomEndDate(`${curYear + 1}-02-28`);
+      setPeriodMode('custom');
+    } else if (preset === 'last7Days') {
+      const start = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+      setCustomStartDate(start);
+      setCustomEndDate(now.toISOString().slice(0, 10));
+      setPeriodMode('custom');
+    } else if (preset === 'last30Days') {
+      const start = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      setCustomStartDate(start);
+      setCustomEndDate(now.toISOString().slice(0, 10));
+      setPeriodMode('custom');
+    } else if (preset === 'all') {
+      setPeriodMode('all');
+    }
+  };
+
+  // Helper to get book effective date
+  const getBookDate = (b: BookRecord): string => {
+    if (b.endDate) return b.endDate.slice(0, 10);
+    if (b.startDate) return b.startDate.slice(0, 10);
+    if (b.createdAt) return b.createdAt.slice(0, 10);
+    return '';
+  };
+
+  // Filter books based on active periodMode
+  const filteredBooks = useMemo(() => {
+    if (periodMode === 'all') {
+      return books;
+    }
+    if (periodMode === 'month') {
+      return books.filter((b) => {
+        const d = getBookDate(b);
+        return d && d.startsWith(monthYearStr);
+      });
+    }
+    // Custom date range
+    return books.filter((b) => {
+      const d = getBookDate(b);
+      if (!d) return false;
+      const matchStart = customStartDate ? d >= customStartDate : true;
+      const matchEnd = customEndDate ? d <= customEndDate : true;
+      return matchStart && matchEnd;
+    });
+  }, [books, periodMode, monthYearStr, customStartDate, customEndDate]);
+
+  // Overall class stats across all time
+  const totalBooksCount = books.length;
   const targetGoal = goalBooks && goalBooks > 0 ? goalBooks : GOAL_BOOKS;
   const thermoPercent = Math.min(Math.round((totalBooksCount / targetGoal) * 100), 100);
 
-  // Filter books completed in the selected month
-  const monthBooks = useMemo(() => {
-    return books.filter((b) => {
-      const d = b.endDate || b.createdAt;
-      return d && d.startsWith(monthYearStr);
+  // Period label for headings
+  const periodLabel = useMemo(() => {
+    if (periodMode === 'all') return '전체 누적 기간';
+    if (periodMode === 'month') return `${year}년 ${month}월`;
+    if (customStartDate && customEndDate) return `${customStartDate} ~ ${customEndDate}`;
+    if (customStartDate) return `${customStartDate} 이후`;
+    if (customEndDate) return `${customEndDate} 이전`;
+    return '지정 기간';
+  }, [periodMode, year, month, customStartDate, customEndDate]);
+
+  // Statistics for the filtered period
+  const periodTotalBooks = filteredBooks.length;
+  const periodAvgRating = useMemo(() => {
+    const rated = filteredBooks.filter((b) => b.rating > 0);
+    if (rated.length === 0) return '-';
+    return (rated.reduce((acc, b) => acc + b.rating, 0) / rated.length).toFixed(1);
+  }, [filteredBooks]);
+
+  // Active students who read at least 1 book in this period
+  const activeReadersCount = useMemo(() => {
+    const set = new Set(filteredBooks.map((b) => b.studentName).filter(Boolean));
+    return set.size;
+  }, [filteredBooks]);
+
+  // Full student list (union of configured students + names found in books)
+  const allKnownStudents = useMemo(() => {
+    const set = new Set<string>();
+    students.forEach((s) => set.add(s));
+    books.forEach((b) => {
+      if (b.studentName) set.add(b.studentName);
     });
-  }, [books, monthYearStr]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
+  }, [students, books]);
 
-  const monthBooksCount = monthBooks.length;
+  // Comprehensive Student Statistics for the filtered period
+  const studentStats = useMemo(() => {
+    const map: Record<string, BookRecord[]> = {};
 
-  // Top Readers (1st to 5th) in the selected month
+    // Group filtered books
+    filteredBooks.forEach((b) => {
+      if (!b.studentName) return;
+      if (!map[b.studentName]) map[b.studentName] = [];
+      map[b.studentName].push(b);
+    });
+
+    // Also include students who read 0 books
+    const targetStudentNames = allKnownStudents.length > 0
+      ? allKnownStudents
+      : Object.keys(map);
+
+    let list = targetStudentNames.map((name) => {
+      const bList = map[name] || [];
+      const rated = bList.filter((b) => b.rating > 0);
+      const avgNum = rated.length > 0
+        ? rated.reduce((sum, b) => sum + b.rating, 0) / rated.length
+        : 0;
+      const avg = rated.length > 0 ? avgNum.toFixed(1) : '-';
+
+      return {
+        name,
+        count: bList.length,
+        avgNum,
+        avg,
+        books: bList,
+        isTeacher: name === TEACHER_NAME
+      };
+    });
+
+    // Filter by search query
+    if (studentSearch.trim()) {
+      const q = studentSearch.trim().toLowerCase();
+      list = list.filter((s) => s.name.toLowerCase().includes(q));
+    }
+
+    // Filter by only readers (> 0)
+    if (onlyReadStudents) {
+      list = list.filter((s) => s.count > 0);
+    }
+
+    // Sort
+    list.sort((a, b) => {
+      if (sortField === 'count') {
+        const diff = b.count - a.count;
+        return sortAsc ? -diff : diff;
+      }
+      if (sortField === 'avg') {
+        const diff = b.avgNum - a.avgNum;
+        return sortAsc ? -diff : diff;
+      }
+      // sort by name
+      const cmp = a.name.localeCompare(b.name, 'ko');
+      return sortAsc ? -cmp : cmp;
+    });
+
+    return list;
+  }, [filteredBooks, allKnownStudents, studentSearch, onlyReadStudents, sortField, sortAsc]);
+
+  // Top Readers in the selected period (1st to 5th)
   const topReaders = useMemo(() => {
     const countMap: Record<string, number> = {};
-    monthBooks.forEach((b) => {
+    filteredBooks.forEach((b) => {
       if (b.studentName) {
         countMap[b.studentName] = (countMap[b.studentName] || 0) + 1;
       }
@@ -94,57 +275,24 @@ export function DashboardPage({
     const uniqueScores = [...new Set(entries.map((e) => e[1]))].slice(0, 5);
 
     return uniqueScores.map((score, rankIndex) => {
-      const students = entries.filter((e) => e[1] === score).map((e) => e[0]);
+      const studentNames = entries.filter((e) => e[1] === score).map((e) => e[0]);
       return {
         rankIndex,
         score,
-        students
+        students: studentNames
       };
     });
-  }, [monthBooks]);
+  }, [filteredBooks]);
 
-  // Recent reviews in the selected month
+  // Recent reviews in the selected period
   const recentReviews = useMemo(() => {
-    return monthBooks
+    return filteredBooks
       .filter((b) => b.review && b.review.trim().length > 0)
       .sort((a, b) => new Date(b.createdAt || b.endDate).getTime() - new Date(a.createdAt || a.endDate).getTime())
-      .slice(0, 8);
-  }, [monthBooks]);
+      .slice(0, 6);
+  }, [filteredBooks]);
 
-  // Student summary grid for the selected month
-  const studentSummary = useMemo(() => {
-    const map: Record<string, BookRecord[]> = {};
-    monthBooks.forEach((b) => {
-      if (!map[b.studentName]) map[b.studentName] = [];
-      map[b.studentName].push(b);
-    });
-
-    return Object.entries(map).map(([name, bList]) => {
-      const rated = bList.filter((b) => b.rating > 0);
-      const avg =
-        rated.length > 0
-          ? (rated.reduce((sum, b) => sum + b.rating, 0) / rated.length).toFixed(1)
-          : '-';
-      return {
-        name,
-        count: bList.length,
-        avg
-      };
-    });
-  }, [monthBooks]);
-
-  const toggleCommentsView = (bookId: string) => {
-    setOpenComments((prev) => {
-      const next = new Set(prev);
-      if (next.has(bookId)) {
-        next.delete(bookId);
-      } else {
-        next.add(bookId);
-      }
-      return next;
-    });
-  };
-
+  // Handle comment submit
   const handleCommentSubmit = (bookId: string) => {
     if (!currentStudent) {
       onRequireLogin();
@@ -155,6 +303,15 @@ export function DashboardPage({
     onAddComment(bookId, text);
     setCommentInputs((prev) => ({ ...prev, [bookId]: '' }));
     setOpenComments((prev) => new Set(prev).add(bookId));
+  };
+
+  const toggleCommentsView = (bookId: string) => {
+    setOpenComments((prev) => {
+      const next = new Set(prev);
+      if (next.has(bookId)) next.delete(bookId);
+      else next.add(bookId);
+      return next;
+    });
   };
 
   const medalStyles = [
@@ -185,46 +342,210 @@ export function DashboardPage({
     }
   ];
 
-  const studentCardGradients = [
-    'linear-gradient(135deg, rgba(59, 130, 246, 0.8) 0%, rgba(37, 99, 235, 0.85) 100%)',
-    'linear-gradient(135deg, rgba(236, 72, 153, 0.8) 0%, rgba(190, 24, 93, 0.85) 100%)',
-    'linear-gradient(135deg, rgba(34, 197, 94, 0.8) 0%, rgba(22, 163, 74, 0.85) 100%)',
-    'linear-gradient(135deg, rgba(249, 115, 22, 0.8) 0%, rgba(217, 119, 6, 0.85) 100%)',
-    'linear-gradient(135deg, rgba(168, 85, 247, 0.8) 0%, rgba(126, 34, 206, 0.85) 100%)',
-    'linear-gradient(135deg, rgba(14, 165, 233, 0.8) 0%, rgba(2, 132, 199, 0.85) 100%)'
-  ];
+  // CSV Export for teacher records
+  const handleExportCSV = () => {
+    const headers = ['순번', '학생명', '읽은권수', '평균별점', '읽은책목록'];
+    const rows = studentStats.map((st, idx) => {
+      const bookTitles = st.books.map((b) => b.bookTitle).join('; ');
+      return [
+        idx + 1,
+        st.name,
+        st.count,
+        st.avg === '-' ? '' : st.avg,
+        `"${bookTitles.replace(/"/g, '""')}"`
+      ];
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `독서통계_${periodLabel.replace(/[\s~:/]/g, '_')}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSortToggle = (field: 'count' | 'avg' | 'name') => {
+    if (sortField === field) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortField(field);
+      setSortAsc(field === 'name'); // default asc for name, desc for numbers
+    }
+  };
 
   return (
     <div id="dashboard-view" className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-8">
-      {/* Month Navigation Control */}
-      <div className="flex justify-center items-center gap-4 py-1">
-        <button
-          id="btn-prev-month"
-          onClick={() => changeMonth(-1)}
-          className="w-11 h-11 flex items-center justify-center rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold transition-all backdrop-blur-md border border-white/20 shadow-md hover:scale-105 active:scale-95"
-          title="이전 달"
-        >
-          <ChevronLeft className="w-6 h-6" />
-        </button>
+      {/* 1. Period Selector Card (Month / Custom Date Range / All Time) */}
+      <section className="bg-white/15 backdrop-blur-md p-4 sm:p-5 rounded-3xl border border-white/20 shadow-xl space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg sm:text-xl font-black text-white">기간별 통계 조회</h2>
+                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-white/20 text-indigo-100">
+                  {periodLabel}
+                </span>
+              </div>
+              <p className="text-xs text-white/75">
+                원하는 시작일과 종료일을 지정하여 학생별 읽은 권수를 한눈에 확인하세요.
+              </p>
+            </div>
+          </div>
 
-        <h2
-          id="month-display"
-          className="text-2xl sm:text-3xl font-black text-white drop-shadow-md min-w-[200px] text-center tracking-wider"
-        >
-          {year}년 {month}월
-        </h2>
+          {/* Mode Switch Buttons */}
+          <div className="flex rounded-2xl bg-black/20 p-1 border border-white/10 shrink-0">
+            <button
+              id="btn-period-month"
+              type="button"
+              onClick={() => setPeriodMode('month')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                periodMode === 'month'
+                  ? 'bg-white text-indigo-900 shadow-md'
+                  : 'text-white/80 hover:text-white'
+              }`}
+            >
+              월별 조회
+            </button>
+            <button
+              id="btn-period-custom"
+              type="button"
+              onClick={() => setPeriodMode('custom')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
+                periodMode === 'custom'
+                  ? 'bg-white text-indigo-900 shadow-md'
+                  : 'text-white/80 hover:text-white'
+              }`}
+            >
+              <Filter className="w-3.5 h-3.5 text-indigo-600" />
+              <span>직접 기간 설정</span>
+            </button>
+            <button
+              id="btn-period-all"
+              type="button"
+              onClick={() => setPeriodMode('all')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                periodMode === 'all'
+                  ? 'bg-white text-indigo-900 shadow-md'
+                  : 'text-white/80 hover:text-white'
+              }`}
+            >
+              전체 누적
+            </button>
+          </div>
+        </div>
 
-        <button
-          id="btn-next-month"
-          onClick={() => changeMonth(1)}
-          className="w-11 h-11 flex items-center justify-center rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold transition-all backdrop-blur-md border border-white/20 shadow-md hover:scale-105 active:scale-95"
-          title="다음 달"
-        >
-          <ChevronRight className="w-6 h-6" />
-        </button>
-      </div>
+        {/* Sub-controls depending on mode */}
+        {periodMode === 'month' && (
+          <div className="flex items-center justify-center gap-3 pt-2 pb-1 border-t border-white/10">
+            <button
+              id="btn-prev-month"
+              onClick={() => changeMonth(-1)}
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/25 text-white font-bold transition-all border border-white/20"
+              title="이전 달"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
 
-      {/* Thermometer Goal Section */}
+            <span
+              id="month-display"
+              className="text-xl sm:text-2xl font-black text-white min-w-[160px] text-center"
+            >
+              {year}년 {month}월
+            </span>
+
+            <button
+              id="btn-next-month"
+              onClick={() => changeMonth(1)}
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/25 text-white font-bold transition-all border border-white/20"
+              title="다음 달"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+
+        {periodMode === 'custom' && (
+          <div className="space-y-3 pt-2 border-t border-white/10">
+            {/* Date Pickers */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-xs font-bold text-white shrink-0">기간 입력:</span>
+              <div className="flex items-center gap-1.5 bg-white/15 px-3 py-1.5 rounded-xl border border-white/20">
+                <input
+                  id="input-custom-start-date"
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="bg-transparent text-white text-xs sm:text-sm font-semibold focus:outline-none cursor-pointer [color-scheme:dark]"
+                />
+              </div>
+              <span className="text-white font-bold">~</span>
+              <div className="flex items-center gap-1.5 bg-white/15 px-3 py-1.5 rounded-xl border border-white/20">
+                <input
+                  id="input-custom-end-date"
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="bg-transparent text-white text-xs sm:text-sm font-semibold focus:outline-none cursor-pointer [color-scheme:dark]"
+                />
+              </div>
+            </div>
+
+            {/* Quick Preset Buttons */}
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-white/70 font-semibold mr-1">빠른 선택:</span>
+              <button
+                type="button"
+                onClick={() => applyPresetRange('thisMonth')}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium transition-colors border border-white/10"
+              >
+                이번 달
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPresetRange('lastMonth')}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium transition-colors border border-white/10"
+              >
+                지난 달
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPresetRange('semester1')}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium transition-colors border border-white/10"
+              >
+                1학기 (3~8월)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPresetRange('semester2')}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium transition-colors border border-white/10"
+              >
+                2학기 (9~익년 2월)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPresetRange('last30Days')}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium transition-colors border border-white/10"
+              >
+                최근 30일
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPresetRange('last7Days')}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium transition-colors border border-white/10"
+              >
+                최근 7일
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* 2. Thermometer Goal Section (Cumulative) */}
       <section className="bg-white/10 p-6 sm:p-7 rounded-3xl backdrop-blur-md border border-white/20 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2.5">
@@ -277,13 +598,18 @@ export function DashboardPage({
         </p>
       </section>
 
-      {/* 3 Summary Statistics Cards */}
+      {/* 3. Three Metrics Cards for the Filtered Period */}
       <section>
-        <h2 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
-          <span>📊 전체 통계 현황</span>
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <span>📊 {periodLabel} 통계 현황</span>
+          </h2>
+          <span className="text-xs text-white/70">
+            총 {filteredBooks.length}권 기록 반영 중
+          </span>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Total books */}
+          {/* Period Total books */}
           <div
             className="backdrop-blur-md rounded-3xl p-6 text-center text-white shadow-lg border border-white/15"
             style={{
@@ -291,9 +617,9 @@ export function DashboardPage({
             }}
           >
             <div id="dash-total-books" className="text-4xl sm:text-5xl font-black">
-              {totalBooksCount}
+              {periodTotalBooks}
             </div>
-            <p className="text-sm font-medium opacity-90 mt-2">우리 반 총 누적 독서량</p>
+            <p className="text-sm font-medium opacity-90 mt-2">해당 기간 완독 권수</p>
           </div>
 
           {/* Average rating */}
@@ -303,93 +629,311 @@ export function DashboardPage({
               background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.85) 0%, rgba(190, 24, 93, 0.9) 100%)'
             }}
           >
-            <div id="dash-avg-rating" className="text-4xl sm:text-5xl font-black flex items-center justify-center gap-1.5">
-              <span>{overallAvgRating}</span>
-              {overallAvgRating !== '-' && <span className="text-2xl text-amber-300">★</span>}
+            <div id="dash-avg-rating" className="text-4xl sm:text-5xl font-black flex items-center justify-center gap-2">
+              <span>{periodAvgRating}</span>
+              {periodAvgRating !== '-' && <span className="text-amber-300 text-3xl">★</span>}
             </div>
-            <p className="text-sm font-medium opacity-90 mt-2">전체 평균 독서 별점</p>
+            <p className="text-sm font-medium opacity-90 mt-2">평균 별점</p>
           </div>
 
-          {/* Selected month read count */}
+          {/* Active readers */}
           <div
             className="backdrop-blur-md rounded-3xl p-6 text-center text-white shadow-lg border border-white/15"
             style={{
               background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.85) 0%, rgba(22, 163, 74, 0.9) 100%)'
             }}
           >
-            <div id="dash-month" className="text-4xl sm:text-5xl font-black">
-              {monthBooksCount}
+            <div id="dash-active-readers" className="text-4xl sm:text-5xl font-black">
+              {activeReadersCount}
+              <span className="text-2xl font-bold ml-1 opacity-80">명</span>
             </div>
-            <p className="text-sm font-medium opacity-90 mt-2">{month}월 한 달 독서량</p>
+            <p className="text-sm font-medium opacity-90 mt-2">독서 참여 학생 수</p>
           </div>
         </div>
       </section>
 
-      {/* Top Readers Section */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-extrabold text-white flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-amber-400" />
-            <span>🏆 {month}월 우수 독자 (1~5위)</span>
-          </h2>
+      {/* 4. NEW: Comprehensive Student Reading Table with Sorting & Search */}
+      <section className="bg-white rounded-3xl p-5 sm:p-7 shadow-2xl border border-slate-100 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                <BookCheck className="w-4 h-4" />
+              </div>
+              <h2 className="text-lg sm:text-xl font-extrabold text-slate-800">
+                학생별 읽은 권수 통계 리스트
+              </h2>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                {periodLabel}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              선택한 기간 동안 각 학생이 완독한 권수와 평균 별점을 정렬하고 세부 도서 목록을 확인하세요.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="btn-export-csv"
+              type="button"
+              onClick={handleExportCSV}
+              title="현재 통계 결과를 엑셀/CSV로 다운로드"
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>엑셀(CSV) 저장</span>
+            </button>
+          </div>
         </div>
 
-        <div id="top-readers" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {/* Filter & Search Bar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <input
+              id="input-student-search"
+              type="text"
+              value={studentSearch}
+              onChange={(e) => setStudentSearch(e.target.value)}
+              placeholder="학생 이름 검색..."
+              className="px-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-indigo-500 w-full sm:w-48 bg-slate-50"
+            />
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 font-medium cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={onlyReadStudents}
+                onChange={(e) => setOnlyReadStudents(e.target.checked)}
+                className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              />
+              <span>1권 이상 읽은 학생만</span>
+            </label>
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium self-end sm:self-center">
+            총 <strong>{studentStats.length}</strong>명 표시됨 (합계:{' '}
+            <strong className="text-indigo-600">
+              {studentStats.reduce((sum, s) => sum + s.count, 0)}
+            </strong>
+            권)
+          </div>
+        </div>
+
+        {/* Table View */}
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full text-left border-collapse text-xs sm:text-sm">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                <th className="py-3 px-3 w-14 text-center">순번</th>
+                <th
+                  onClick={() => handleSortToggle('name')}
+                  className="py-3 px-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>학생명</span>
+                    <ArrowUpDown className="w-3.5 h-3.5 opacity-60" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortToggle('count')}
+                  className="py-3 px-3 text-center cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                >
+                  <div className="flex items-center justify-center gap-1 text-indigo-700 font-black">
+                    <span>읽은 권수</span>
+                    <ArrowUpDown className="w-3.5 h-3.5" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortToggle('avg')}
+                  className="py-3 px-3 text-center cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>평균 별점</span>
+                    <ArrowUpDown className="w-3.5 h-3.5 opacity-60" />
+                  </div>
+                </th>
+                <th className="py-3 px-4">읽은 책 확인</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {studentStats.length > 0 ? (
+                studentStats.map((st, idx) => {
+                  const isTop = idx < 3 && st.count > 0 && sortField === 'count' && !sortAsc;
+                  const isExpanded = expandedStudent === st.name;
+
+                  return (
+                    <tr
+                      key={st.name}
+                      className={`hover:bg-indigo-50/40 transition-colors ${
+                        st.count === 0 ? 'opacity-60 bg-slate-50/30' : ''
+                      }`}
+                    >
+                      <td className="py-3 px-3 text-center font-bold text-slate-500">
+                        {isTop ? (
+                          idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : '🥉 3'
+                        ) : (
+                          idx + 1
+                        )}
+                      </td>
+                      <td className="py-3 px-3 font-extrabold text-slate-800">
+                        <div className="flex items-center gap-1.5">
+                          <span>{st.name}</span>
+                          {st.isTeacher && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">
+                              선생님
+                            </span>
+                          )}
+                          {st.count >= 10 && (
+                            <span title="독서왕 (10권 이상)">👑</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <span
+                          className={`inline-flex items-center justify-center px-3 py-1 rounded-full font-black text-xs sm:text-sm ${
+                            st.count > 0
+                              ? 'bg-indigo-100 text-indigo-700'
+                              : 'bg-slate-100 text-slate-400'
+                          }`}
+                        >
+                          {st.count}권
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-slate-700">
+                        {st.avg !== '-' ? (
+                          <span className="flex items-center justify-center gap-0.5 text-amber-500">
+                            ★ {st.avg}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">-</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        {st.books.length > 0 ? (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedStudent(isExpanded ? null : st.name)}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                            >
+                              <span>{st.books.length}권 목록 보기</span>
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 transition-transform ${
+                                  isExpanded ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                            {isExpanded && (
+                              <div className="mt-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                                {st.books.map((b) => (
+                                  <div key={b.id} className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-slate-800">
+                                      • {b.bookTitle}
+                                    </span>
+                                    <span className="text-[11px] text-slate-400 shrink-0">
+                                      {getBookDate(b)} | ★{b.rating}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">기록 없음</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
+                    조건에 해당하는 학생 독서 기록이 없습니다.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* 5. Top Readers (1st to 5th) Podium in the selected period */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Trophy className="w-6 h-6 text-amber-400" />
+            <h2 className="text-xl font-extrabold text-white">
+              🏆 {periodLabel} 독서 랭킹 TOP 5
+            </h2>
+          </div>
+          <span className="text-xs text-white/70">완독 권수 기준</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           {topReaders.length > 0 ? (
             topReaders.map((tier) => {
               const style = medalStyles[tier.rankIndex] || medalStyles[4];
-              const isFirst = tier.rankIndex === 0;
 
-              return tier.students.map((name) => (
-                <motion.div
-                  key={name}
-                  id={`top-reader-${name}`}
-                  whileHover={{ scale: 1.04 }}
-                  className={`relative shiny-badge rounded-3xl p-5 text-center text-white shadow-xl transition-all border ${
-                    isFirst
-                      ? 'border-yellow-200 ring-4 ring-yellow-400/40 z-10'
-                      : 'border-white/20'
-                  }`}
+              return (
+                <div
+                  key={tier.rankIndex}
+                  id={`top-reader-tier-${tier.rankIndex + 1}`}
+                  className="rounded-3xl p-4 text-white shadow-xl backdrop-blur-md relative overflow-hidden transition-all hover:scale-[1.03]"
                   style={{
                     background: style.gradient,
-                    boxShadow: `0 10px 25px ${style.glow}35`
+                    boxShadow: `0 10px 25px -5px ${style.glow}40`
                   }}
                 >
-                  {isFirst && (
-                    <div className="absolute -top-4 -right-2 text-3xl animate-bounce drop-shadow-md select-none">
-                      👑
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black uppercase tracking-wider bg-black/20 px-2.5 py-0.5 rounded-full">
+                      {style.label}
+                    </span>
+                    <span className="text-xs font-black bg-white/20 px-2 py-0.5 rounded-full">
+                      {tier.score}권
+                    </span>
+                  </div>
 
-                  <div className="text-2xl font-black mb-2 drop-shadow-sm">{style.label}</div>
-                  <div className="font-black text-lg mb-1 truncate">{name}</div>
-                  <p className="text-xs sm:text-sm font-bold opacity-95">
-                    {tier.score}권 완독! 🎉
-                  </p>
-                </motion.div>
-              ));
+                  <div className="space-y-1 mt-3">
+                    {tier.students.map((name) => (
+                      <div
+                        key={name}
+                        className="font-extrabold text-base tracking-tight truncate flex items-center gap-1"
+                        title={name}
+                      >
+                        <span>{name}</span>
+                        {tier.score >= 10 && <span title="독서왕">👑</span>}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-[11px] opacity-80 mt-3 pt-2 border-t border-white/20 flex items-center justify-between">
+                    <span>{tier.students.length}명 달성</span>
+                    <span>완독</span>
+                  </div>
+                </div>
+              );
             })
           ) : (
-            <div className="col-span-full bg-white/10 rounded-2xl py-10 text-center text-white/70 border border-white/15">
-              {month}월에는 아직 기록된 완독 도서가 없어요 😅
+            <div className="col-span-full bg-white/10 rounded-2xl py-8 text-center text-white/70 border border-white/15">
+              선택한 기간({periodLabel})에는 아직 독서 기록이 없습니다.
             </div>
           )}
         </div>
       </section>
 
-      {/* Live Reviews Feed Section with Likes & Comments */}
+      {/* 6. Recent Reviews in the selected period with Like & Comments */}
       <section>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-extrabold text-white flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-indigo-300" />
-            <span>💬 {month}월 친구들의 생생한 독서 리뷰</span>
-          </h2>
+            <h2 className="text-xl font-extrabold text-white">
+              💬 {periodLabel} 친구들의 독서 한마디
+            </h2>
+          </div>
+          <span className="text-xs text-white/70">따뜻한 댓글과 응원을 남겨보세요</span>
         </div>
 
-        <div id="recent-feed" className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {recentReviews.length > 0 ? (
             recentReviews.map((book) => {
-              const isUrl = book.coverUrl.startsWith('http');
               const likes = book.likes || [];
               const comments = book.comments || [];
               const isLiked = currentStudent ? likes.includes(currentStudent) : false;
@@ -398,155 +942,124 @@ export function DashboardPage({
               return (
                 <div
                   key={book.id}
-                  id={`feed-card-${book.id}`}
-                  className="bg-white rounded-3xl p-5 shadow-xl border border-slate-100 flex flex-col justify-between"
+                  id={`review-card-${book.id}`}
+                  className="bg-white rounded-3xl p-5 shadow-lg border border-slate-100 flex flex-col justify-between hover:shadow-xl transition-all"
                 >
                   <div>
-                    {/* Top book & author info */}
-                    <div className="flex gap-4">
-                      <div className="shrink-0">
-                        {isUrl ? (
-                          <img
-                            src={book.coverUrl}
-                            alt={book.bookTitle}
-                            className="w-16 h-22 object-cover rounded-xl shadow-sm border border-slate-200"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <div className="w-16 h-22 rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 flex items-center justify-center text-3xl shadow-sm border border-indigo-100">
-                            {book.coverUrl || '📕'}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1 mb-1">
-                          <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full">
-                            {book.studentName} 학생
-                          </span>
-                          <div className="flex items-center text-amber-400 text-xs">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <Star
-                                key={i}
-                                className={`w-3.5 h-3.5 ${
-                                  i < book.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'
-                                }`}
-                              />
-                            ))}
-                          </div>
-                        </div>
-
-                        <h4 className="font-extrabold text-slate-800 text-base truncate">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div>
+                        <h4 className="font-extrabold text-slate-800 text-base leading-snug">
                           {book.bookTitle}
                         </h4>
-                        {book.author && (
-                          <p className="text-xs text-slate-400 truncate">{book.author} 지음</p>
-                        )}
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs font-bold text-indigo-600">
+                            {book.studentName} 학생
+                          </span>
+                          {book.author && (
+                            <span className="text-xs text-slate-400">
+                              • {book.author}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center text-amber-400 text-xs shrink-0 font-bold">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`w-3.5 h-3.5 ${
+                              i < book.rating
+                                ? 'fill-amber-400 text-amber-400'
+                                : 'text-slate-200'
+                            }`}
+                          />
+                        ))}
                       </div>
                     </div>
 
-                    {/* Review text */}
-                    <p className="text-xs sm:text-sm text-slate-600 mt-3 p-3 bg-slate-50 rounded-2xl leading-relaxed whitespace-pre-line border border-slate-100 line-clamp-3">
-                      {book.review}
+                    <p className="text-xs text-slate-600 line-clamp-3 bg-slate-50 p-3 rounded-2xl border border-slate-100 italic leading-relaxed">
+                      "{book.review}"
                     </p>
                   </div>
 
-                  {/* Actions: Likes and Comments toggle */}
-                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-xs text-slate-400">
-                      {book.endDate ? `${book.endDate} 완독` : ''}
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        id={`btn-comments-${book.id}`}
-                        onClick={() => toggleCommentsView(book.id)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>댓글 {comments.length}</span>
-                      </button>
-
-                      <button
-                        id={`btn-like-${book.id}`}
-                        onClick={() => onToggleLike(book.id)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                          isLiked
-                            ? 'bg-rose-50 text-rose-600 border border-rose-200 heart-bump'
-                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  {/* Actions: Likes & Comments */}
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <button
+                      id={`like-btn-${book.id}`}
+                      type="button"
+                      onClick={() => onToggleLike(book.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all ${
+                        isLiked
+                          ? 'bg-pink-50 text-pink-600 hover:bg-pink-100'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Heart
+                        className={`w-4 h-4 ${
+                          isLiked ? 'fill-pink-500 text-pink-500' : 'text-slate-400'
                         }`}
-                      >
-                        <Heart className={`w-3.5 h-3.5 ${isLiked ? 'fill-rose-500 text-rose-500' : ''}`} />
-                        <span>추천 {likes.length}</span>
-                      </button>
-                    </div>
+                      />
+                      <span>추천 {likes.length}</span>
+                    </button>
+
+                    <button
+                      id={`toggle-comments-${book.id}`}
+                      type="button"
+                      onClick={() => toggleCommentsView(book.id)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold transition-colors"
+                    >
+                      <MessageSquare className="w-4 h-4 text-slate-400" />
+                      <span>댓글 {comments.length}</span>
+                    </button>
                   </div>
 
-                  {/* Expandable Comments Drawer */}
+                  {/* Expandable comments section */}
                   <AnimatePresence>
                     {isCommentsOpen && (
                       <motion.div
-                        id={`comments-drawer-${book.id}`}
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
-                        className="mt-3 pt-3 border-t border-slate-100 space-y-2.5 overflow-hidden"
+                        className="mt-3 pt-3 border-t border-slate-100 space-y-2 overflow-hidden"
                       >
-                        {/* List of comments */}
-                        <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                          {comments.length > 0 ? (
-                            comments.map((c) => {
-                              const isAuthor = c.author === book.studentName;
-                              const isMyComment = c.author === currentStudent;
+                        {comments.length > 0 ? (
+                          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                            {comments.map((c) => {
+                              const canDelete =
+                                currentStudent &&
+                                (currentStudent === c.author ||
+                                  currentStudent === TEACHER_NAME);
 
                               return (
                                 <div
                                   key={c.id}
-                                  className="bg-slate-50 p-2.5 rounded-xl text-xs flex items-start justify-between gap-2 border border-slate-100 group"
+                                  className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-xs flex items-start justify-between gap-2"
                                 >
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1.5 mb-1">
-                                      <span
-                                        className={`font-bold ${
-                                          isAuthor ? 'text-pink-600' : 'text-indigo-600'
-                                        }`}
-                                      >
-                                        {c.author}
-                                      </span>
-                                      {isAuthor && (
-                                        <span className="text-[10px] bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded-md font-semibold">
-                                          글쓴이
-                                        </span>
-                                      )}
-                                    </div>
-                                    <p className="text-slate-700 break-words leading-relaxed">
-                                      {c.text}
-                                    </p>
+                                  <div>
+                                    <span className="font-bold text-indigo-700">
+                                      {c.author}:
+                                    </span>{' '}
+                                    <span className="text-slate-700">{c.text}</span>
                                   </div>
-
-                                  {isMyComment && (
+                                  {canDelete && (
                                     <button
-                                      id={`btn-del-comment-${c.id}`}
                                       onClick={() => onDeleteComment(book.id, c.id)}
-                                      className="text-slate-400 hover:text-rose-600 p-1 transition-colors"
+                                      className="text-slate-400 hover:text-rose-600 shrink-0"
                                       title="댓글 삭제"
                                     >
-                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <Trash2 className="w-3 h-3" />
                                     </button>
                                   )}
                                 </div>
                               );
-                            })
-                          ) : (
-                            <p className="text-center text-xs text-slate-400 py-3">
-                              아직 댓글이 없어요. 친구에게 첫 번째 칭찬과 응원의 댓글을 남겨보세요!
-                            </p>
-                          )}
-                        </div>
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 text-center py-1">
+                            첫 댓글을 남겨보세요!
+                          </p>
+                        )}
 
-                        {/* Comment input form */}
                         <div className="flex gap-2 pt-1">
                           <input
                             id={`input-comment-${book.id}`}
@@ -588,70 +1101,7 @@ export function DashboardPage({
             })
           ) : (
             <div className="col-span-full bg-white/10 rounded-2xl py-10 text-center text-white/70 border border-white/15">
-              {month}월에는 아직 작성된 감상평이 없어요
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Student Grid Section */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-extrabold text-white flex items-center gap-2">
-            <Users className="w-5 h-5 text-indigo-300" />
-            <span>👥 {month}월 학생별 독서 현황</span>
-          </h2>
-        </div>
-
-        <div id="students-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {studentSummary.length > 0 ? (
-            studentSummary.map((st, idx) => {
-              const bg = studentCardGradients[idx % studentCardGradients.length];
-              const isKing = st.count >= 10;
-
-              return (
-                <div
-                  key={st.name}
-                  id={`student-grid-${st.name}`}
-                  className="backdrop-blur-md rounded-3xl p-5 text-white shadow-lg border border-white/15 transition-all hover:scale-[1.02]"
-                  style={{ background: bg }}
-                >
-                  <div className="flex items-center gap-3.5 mb-3.5">
-                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg bg-white/25 shadow-inner">
-                      {st.name.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="font-extrabold text-base flex items-center gap-1">
-                        <span>{st.name}</span>
-                        {isKing && <span title="독서왕 뱃지">👑</span>}
-                      </div>
-                      <div className="text-xs opacity-85 font-medium">{st.count}권 완독 달성</div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-center">
-                    <div className="bg-white/20 rounded-xl p-2.5 backdrop-blur-sm">
-                      <div className="text-xl font-black">{st.count}</div>
-                      <div className="text-[11px] opacity-80 mt-0.5">읽은 책</div>
-                    </div>
-                    <div className="bg-white/20 rounded-xl p-2.5 backdrop-blur-sm">
-                      <div className="text-xl font-black flex items-center justify-center gap-1">
-                        <span>{st.avg}</span>
-                        {st.avg !== '-' && <span className="text-sm">★</span>}
-                      </div>
-                      <div className="text-[11px] opacity-80 mt-0.5">평균 별점</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            <div
-              id="no-students"
-              className="col-span-full bg-white/10 rounded-2xl py-12 text-center text-white/70 border border-white/15"
-            >
-              <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p id="no-students-text">{month}월에는 아직 학생별 독서 기록이 없습니다.</p>
+              선택한 기간에는 아직 작성된 감상평이 없어요
             </div>
           )}
         </div>
